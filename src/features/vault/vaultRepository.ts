@@ -1,10 +1,10 @@
-import { encryptedVaultCollection, preloadVaultDb, vaultMetaCollection } from "@/db/vaultDb";
-import { deriveVaultKey, generateSalt } from "@/features/auth/keyDerivation";
 import { decryptVault, encryptVault } from "@/features/vault/vaultCrypto";
-import { now } from "@/lib/utils";
-import type { EncryptedVaultRecord, PlainVault, VaultDocument, VaultMeta } from "@/types/vault";
+import { generateVaultKey, wrapVaultKey, generateRecoveryKeyStr, hashRecoveryKeyStr, importRecoveryKey, unwrapVaultKey, deriveMasterKeyFromPin, generateSalt } from "@/features/auth/keyDerivation";
+import { apiRegister, apiLogin, apiSyncVault, apiHasUsers, apiResetAll } from "@/api/backend";
+import type { PlainVault } from "@/types/vault";
 
 const DEFAULT_ITERATIONS = 310_000;
+const FIXED_USER_ID = "default"; // Because it's a local app, we use a fixed user ID
 
 export function createEmptyVault(): PlainVault {
   return {
@@ -18,87 +18,91 @@ export function createEmptyVault(): PlainVault {
   };
 }
 
-export async function readVaultDocument(): Promise<VaultDocument | null> {
-  await preloadVaultDb();
-  const meta = vaultMetaCollection.get("default") as VaultMeta | undefined;
-  const encrypted = encryptedVaultCollection.get("default") as EncryptedVaultRecord | undefined;
-  if (!meta || !encrypted) return null;
-  return { meta, encrypted };
+export async function resetAllData() {
+  await apiResetAll();
 }
 
 export async function hasVault() {
-  return Boolean(await readVaultDocument());
+  return await apiHasUsers();
 }
 
-export async function initializeVault(masterPassword: string) {
-  const salt = generateSalt();
+export async function initializeVault(pin: string) {
+  // 1. Generate salt and derive Master Key via PBKDF2
+  const pbkdf2Salt = generateSalt(32);
+  const masterKey = await deriveMasterKeyFromPin(pin, pbkdf2Salt, DEFAULT_ITERATIONS);
+
+  // 2. Cryptographic Key Generation
+  const vaultKey = await generateVaultKey();
+  const recoveryKeyStr = generateRecoveryKeyStr();
+  const recoveryKeyHash = await hashRecoveryKeyStr(recoveryKeyStr);
+  const recoveryKeyCrypto = await importRecoveryKey(recoveryKeyStr);
+
+  // 3. Wrap Vault Key
+  const wrappedMaster = await wrapVaultKey(vaultKey, masterKey);
+  const wrappedRecovery = await wrapVaultKey(vaultKey, recoveryKeyCrypto);
+
+  // 4. Encrypt Initial Vault
   const vault = createEmptyVault();
-  const key = await deriveVaultKey(masterPassword, salt, DEFAULT_ITERATIONS);
-  const encryptedPayload = await encryptVault(vault, key);
-  const timestamp = now();
+  const encryptedPayload = await encryptVault(vault, vaultKey);
 
-  const meta: VaultMeta = {
-    id: "default",
-    version: 1,
-    kdf: {
-      name: "PBKDF2",
-      salt,
-      iterations: DEFAULT_ITERATIONS,
-      hash: "SHA-256",
-    },
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  };
+  // 5. Send to Backend
+  await apiRegister({
+    userId: FIXED_USER_ID,
+    pbkdf2Salt,
+    wrappedKeyMaster: JSON.stringify(wrappedMaster),
+    wrappedKeyRecovery: JSON.stringify(wrappedRecovery),
+    recoveryKeyHash,
+    vaultCiphertext: encryptedPayload.ciphertext,
+    vaultIv: encryptedPayload.iv,
+  });
 
-  const encrypted: EncryptedVaultRecord = {
-    id: "default",
-    type: "vault",
-    iv: encryptedPayload.iv,
-    ciphertext: encryptedPayload.ciphertext,
-    updatedAt: timestamp,
-  };
-
-  const existingMeta = vaultMetaCollection.has("default");
-  const existingVault = encryptedVaultCollection.has("default");
-  const metaTx = existingMeta
-    ? vaultMetaCollection.update("default", (draft) => Object.assign(draft, meta))
-    : vaultMetaCollection.insert(meta);
-  const vaultTx = existingVault
-    ? encryptedVaultCollection.update("default", (draft) => Object.assign(draft, encrypted))
-    : encryptedVaultCollection.insert(encrypted);
-
-  await Promise.all([metaTx.isPersisted.promise, vaultTx.isPersisted.promise]);
-  return { key, vault };
+  return { key: vaultKey, vault, recoveryKeyStr };
 }
 
-export async function unlockVault(masterPassword: string) {
-  const document = await readVaultDocument();
-  if (!document) {
-    throw new Error("Vault has not been initialized.");
+export async function unlockVault(pin: string) {
+  // 1. Fetch user data from backend
+  const { pbkdf2Salt, wrappedKeyMaster, vaultCiphertext, vaultIv } = await apiLogin(FIXED_USER_ID);
+
+  // 2. Derive Master Key from PIN
+  const masterKey = await deriveMasterKeyFromPin(pin, pbkdf2Salt, DEFAULT_ITERATIONS);
+
+  // 3. Unwrap Vault Key
+  const wrappedMasterObj = JSON.parse(wrappedKeyMaster);
+  let vaultKey: CryptoKey;
+  try {
+    vaultKey = await unwrapVaultKey(
+      wrappedMasterObj.wrappedBase64,
+      wrappedMasterObj.ivBase64,
+      masterKey
+    );
+  } catch (err) {
+    throw new Error("Invalid PIN. Failed to unwrap encryption key.");
   }
 
-  const key = await deriveVaultKey(
-    masterPassword,
-    document.meta.kdf.salt,
-    document.meta.kdf.iterations,
-  );
-  const vault = await decryptVault(document.encrypted.ciphertext, document.encrypted.iv, key);
-  return { key, vault };
+  // 4. Decrypt Vault
+  let vault: PlainVault;
+  try {
+    vault = await decryptVault(vaultCiphertext, vaultIv, vaultKey);
+  } catch (err) {
+    throw new Error("Invalid PIN or corrupted vault. Decryption failed.");
+  }
+  
+  return { key: vaultKey, vault };
 }
 
 export async function persistVault(vault: PlainVault, key: CryptoKey) {
+  // Save the current version to use as the concurrency check
+  const baseVersion = vault.version;
+  
+  // Bump the version locally BEFORE encrypting, so the new version is persisted inside the ciphertext
+  vault.version += 1;
+  
   const encryptedPayload = await encryptVault(vault, key);
-  const timestamp = now();
 
-  const vaultTx = encryptedVaultCollection.update("default", (draft) => {
-    draft.iv = encryptedPayload.iv;
-    draft.ciphertext = encryptedPayload.ciphertext;
-    draft.updatedAt = timestamp;
+  // Send the updated vault to the backend
+  await apiSyncVault({
+    vaultCiphertext: encryptedPayload.ciphertext,
+    vaultIv: encryptedPayload.iv,
+    baseVersion: baseVersion, // optimistic locking against the old version
   });
-
-  const metaTx = vaultMetaCollection.update("default", (draft) => {
-    draft.updatedAt = timestamp;
-  });
-
-  await Promise.all([vaultTx.isPersisted.promise, metaTx.isPersisted.promise]);
 }

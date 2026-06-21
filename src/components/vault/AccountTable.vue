@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h } from "vue";
-import { Eye, EyeOff, KeyRound, MousePointerClick, Trash2 } from "lucide-vue-next";
+import { Eye, EyeOff, KeyRound, MousePointerClick, Trash2, FileText } from "lucide-vue-next";
 import {
   FlexRender,
   createColumnHelper,
@@ -20,6 +20,7 @@ const emit = defineEmits<{
   copy: [account: AccountItem];
   toggleReveal: [id: string];
   delete: [id: string];
+  openNote: [id: string];
 }>();
 
 const column = createColumnHelper<AccountItem>();
@@ -29,10 +30,7 @@ const columns = [
     header: "Account",
     cell: (info) => info.getValue() || "Primary",
   }),
-  column.accessor("username", {
-    header: "Username",
-    cell: (info) => info.getValue() || "No username",
-  }),
+
   column.accessor("password", {
     header: "Password",
     cell: (info) => {
@@ -60,6 +58,18 @@ const columns = [
             },
           },
           h(revealed ? EyeOff : Eye, { size: 16 }),
+        ),
+        h(
+          "button",
+          {
+            class: "icon-btn",
+            title: "Secure Note",
+            onClick: (event: MouseEvent) => {
+              event.stopPropagation();
+              emit("openNote", account.id);
+            },
+          },
+          h(FileText, { size: 16 }),
         ),
         h(
           "button",

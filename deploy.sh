@@ -1,0 +1,40 @@
+#!/bin/bash
+set -e
+
+echo "🚀 Deploying Password Vision..."
+
+# 如果你使用的是 Git 部署，请取消注释下一行来自动拉取代码
+# git pull origin main
+
+# 1. 检查是否存在 .env 文件
+if [ ! -f .env ]; then
+  echo "⚠️  .env file not found! Copying from .env.example..."
+  cp .env.example .env
+  echo "🛑 PLEASE edit .env file to set a secure JWT_SECRET before restarting."
+  exit 1
+fi
+
+echo "📦 Installing dependencies..."
+bun install
+
+echo "🏗️ Building frontend..."
+bun run build
+
+echo "🔄 Restarting backend service with pm2..."
+# 检查 pm2 是否全局安装
+if ! command -v pm2 &> /dev/null; then
+    echo "⚠️ pm2 is not installed. Installing pm2 globally..."
+    bun add -g pm2
+fi
+
+# 如果 password-vision 已经在 pm2 列表中则重启，否则新建
+if pm2 describe password-vision > /dev/null 2>&1; then
+  pm2 restart password-vision
+else
+  echo "Starting new pm2 instance..."
+  # pm2 默认会加载当前目录的 .env 文件
+  pm2 start server/index.ts --name "password-vision" --interpreter ~/.bun/bin/bun
+  pm2 save
+fi
+
+echo "✅ Deployment complete!"

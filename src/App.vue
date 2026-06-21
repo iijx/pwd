@@ -2,8 +2,6 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useStore } from "@tanstack/vue-store";
 import {
-  Cloud,
-  CloudOff,
   Eye,
   EyeOff,
   Fingerprint,
@@ -16,10 +14,12 @@ import {
   ShieldCheck,
   Trash2,
   Unlock,
+  X,
 } from "lucide-vue-next";
-import { isPrfSupported, registerPasskey, decryptPasswordWithPasskey } from "@/lib/webauthn";
-import { isICloudSignedIn, signInToICloud, signOutFromICloud, syncWithICloud } from "@/features/sync/cloudkitSync";
+import { debounce } from "lodash-es";
+
 import AccountTable from "@/components/vault/AccountTable.vue";
+import SecureNoteEditor from "@/components/vault/SecureNoteEditor.vue";
 import { copySecret } from "@/features/clipboard/clipboard";
 import { generatePassword } from "@/features/vault/passwordGenerator";
 import { persistVault, hasVault, initializeVault, unlockVault } from "@/features/vault/vaultRepository";
@@ -37,12 +37,11 @@ const booted = ref(false);
 const initialized = ref(false);
 const busy = ref(false);
 const authError = ref("");
-const masterPassword = ref("");
-const confirmPassword = ref("");
 const searchInput = ref<HTMLInputElement | null>(null);
-const prfSupported = ref(false);
-const hasPasskey = ref(false);
-const cloudSignedIn = ref(false);
+const pin = ref("");
+const confirmPin = ref("");
+const newRecoveryKeyStr = ref("");
+const editingNoteAccountId = ref<string | null>(null);
 
 const serviceForm = ref({
   name: "",
@@ -51,19 +50,8 @@ const serviceForm = ref({
 
 const accountForm = ref({
   label: "",
-  username: "",
   password: "",
-  notes: "",
-  customFields: [] as Array<{ name: string; value: string }>,
 });
-
-function addCustomField() {
-  accountForm.value.customFields.push({ name: "", value: "" });
-}
-
-function removeCustomField(index: number) {
-  accountForm.value.customFields.splice(index, 1);
-}
 
 const vault = computed(() => session.value.vault);
 const services = computed(() => vault.value?.services ?? []);
@@ -84,6 +72,19 @@ const selectedAccount = computed(() =>
 const visibleServices = computed(() =>
   sortServices(filterServices(services.value, accounts.value, session.value.searchKeyword)),
 );
+
+const editingNoteAccount = computed(() => {
+  if (!editingNoteAccountId.value) return null;
+  return accounts.value.find(a => a.id === editingNoteAccountId.value) || null;
+});
+
+function openNoteModal(accountId: string) {
+  editingNoteAccountId.value = accountId;
+}
+
+function closeNoteModal() {
+  editingNoteAccountId.value = null;
+}
 
 watch(visibleServices, (nextServices) => {
   if (!nextServices.length) {
@@ -113,17 +114,10 @@ watch(selectedAccounts, (nextAccounts) => {
 
 onMounted(async () => {
   initialized.value = await hasVault();
-  prfSupported.value = await isPrfSupported();
-  hasPasskey.value = !!localStorage.getItem("floating-key-vault:passkey");
-  cloudSignedIn.value = !!localStorage.getItem("mock_icloud_signed_in") || await isICloudSignedIn();
   booted.value = true;
   await nextTick();
   searchInput.value?.focus();
   window.addEventListener("keydown", handleKeydown);
-
-  if (initialized.value && hasPasskey.value) {
-    void unlockWithPasskey();
-  }
 });
 
 onUnmounted(() => {
@@ -132,23 +126,23 @@ onUnmounted(() => {
 
 async function setupVault() {
   authError.value = "";
-  if (masterPassword.value.length < 6) {
-    authError.value = "Use at least 6 characters for the master password.";
+  if (pin.value.length !== 6 || !/^\d+$/.test(pin.value)) {
+    authError.value = "PIN must be exactly 6 digits.";
     return;
   }
-  if (masterPassword.value !== confirmPassword.value) {
-    authError.value = "The confirmation does not match.";
+  if (pin.value !== confirmPin.value) {
+    authError.value = "PINs do not match.";
     return;
   }
-
   busy.value = true;
   try {
-    const result = await initializeVault(masterPassword.value);
+    const result = await initializeVault(pin.value);
     setUnlocked(result.vault, result.key);
     initialized.value = true;
-    masterPassword.value = "";
-    confirmPassword.value = "";
-    showToast("Vault initialized.", "success");
+    pin.value = "";
+    confirmPin.value = "";
+    newRecoveryKeyStr.value = result.recoveryKeyStr;
+    showToast("Vault initialized successfully.", "success");
   } catch (error) {
     authError.value = error instanceof Error ? error.message : "Unable to initialize vault.";
   } finally {
@@ -160,62 +154,26 @@ async function unlock() {
   authError.value = "";
   busy.value = true;
   try {
-    const result = await unlockVault(masterPassword.value);
+    const result = await unlockVault(pin.value);
     setUnlocked(result.vault, result.key);
-    masterPassword.value = "";
+    pin.value = "";
     showToast("Vault unlocked.", "success");
-  } catch {
-    authError.value = "Master password is incorrect or the vault is corrupted.";
+  } catch (error) {
+    authError.value = error instanceof Error ? error.message : "Authentication failed.";
   } finally {
     busy.value = false;
   }
 }
 
-async function togglePasskey() {
-  if (hasPasskey.value) {
-    localStorage.removeItem("floating-key-vault:passkey");
-    hasPasskey.value = false;
-    showToast("Touch ID unlock disabled.");
-    return;
-  }
-
-  const pw = prompt("Enter your master password to enable Touch ID unlock:");
-  if (!pw) return;
-
-  busy.value = true;
-  try {
-    const result = await unlockVault(pw);
-    if (!result) {
-      throw new Error("Password verification failed.");
-    }
-    const metadata = await registerPasskey(pw);
-    localStorage.setItem("floating-key-vault:passkey", JSON.stringify(metadata));
-    hasPasskey.value = true;
-    showToast("Touch ID unlock enabled.", "success");
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "Failed to enable Touch ID.");
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function unlockWithPasskey() {
-  const stored = localStorage.getItem("floating-key-vault:passkey");
-  if (!stored) return;
-
-  busy.value = true;
-  authError.value = "";
-  try {
-    const { credentialId, encryptedPassword, iv } = JSON.parse(stored);
-    const masterPasswordDecrypted = await decryptPasswordWithPasskey(credentialId, encryptedPassword, iv);
-    const result = await unlockVault(masterPasswordDecrypted);
-    setUnlocked(result.vault, result.key);
-    showToast("Vault unlocked with Touch ID.", "success");
-  } catch (error) {
-    authError.value = "Touch ID authentication failed or was cancelled.";
-    console.error("Passkey unlock error:", error);
-  } finally {
-    busy.value = false;
+function resetApp() {
+  if (confirm("Are you sure you want to delete all vault data? This cannot be undone!")) {
+    localStorage.clear();
+    indexedDB.databases().then((dbs) => {
+      dbs.forEach((db) => {
+        if (db.name) indexedDB.deleteDatabase(db.name);
+      });
+      window.location.reload();
+    });
   }
 }
 
@@ -241,42 +199,8 @@ async function updateVault(updater: (draft: PlainVault) => PlainVault) {
   const nextVault = updater(JSON.parse(JSON.stringify(session.value.vault)) as PlainVault);
   setSessionState({ vault: nextVault });
   await persistVault(nextVault, session.value.vaultKey);
-
-  if (cloudSignedIn.value) {
-    void syncWithICloud(nextVault, session.value.vaultKey);
-  }
 }
 
-async function handleCloudAction() {
-  if (!cloudSignedIn.value) {
-    busy.value = true;
-    try {
-      const ok = await signInToICloud();
-      if (ok) {
-        cloudSignedIn.value = true;
-        if (session.value.vault && session.value.vaultKey) {
-          await syncWithICloud(session.value.vault, session.value.vaultKey);
-        }
-      }
-    } finally {
-      busy.value = false;
-    }
-  } else {
-    if (confirm("iCloud is connected. Do you want to sync now? Cancel to sign out instead.")) {
-      if (session.value.vault && session.value.vaultKey) {
-        busy.value = true;
-        try {
-          await syncWithICloud(session.value.vault, session.value.vaultKey);
-        } finally {
-          busy.value = false;
-        }
-      }
-    } else {
-      await signOutFromICloud();
-      cloudSignedIn.value = false;
-    }
-  }
-}
 
 async function addService() {
   const name = serviceForm.value.name.trim();
@@ -301,35 +225,15 @@ async function addService() {
   showToast("Service added.", "success");
 }
 
-async function deleteService(serviceId: string) {
-  await updateVault((draft) => {
-    draft.services = draft.services.filter((service) => service.id !== serviceId);
-    draft.accounts = draft.accounts.filter((account) => account.serviceId !== serviceId);
-    return draft;
-  });
-  showToast("Service deleted.");
-}
-
 async function addAccount() {
   if (!selectedService.value) return;
   const password = accountForm.value.password || generatePassword();
-  const customFields = accountForm.value.customFields
-    .filter((f) => f.name.trim() || f.value.trim())
-    .map((f) => ({
-      id: uid("field"),
-      name: f.name.trim() || "Custom field",
-      value: f.value.trim(),
-      type: "secret" as const,
-    }));
 
   const account: AccountItem = {
     id: uid("acct"),
     serviceId: selectedService.value.id,
     label: accountForm.value.label.trim() || "Primary",
-    username: accountForm.value.username.trim(),
     password,
-    notes: accountForm.value.notes.trim() || undefined,
-    customFields,
     usageCount: 0,
     createdAt: now(),
     updatedAt: now(),
@@ -342,13 +246,25 @@ async function addAccount() {
 
   accountForm.value = {
     label: "",
-    username: "",
     password: "",
-    notes: "",
-    customFields: [],
   };
   setSessionState({ selectedAccountId: account.id, focusArea: "accounts" });
   showToast("Account added.", "success");
+}
+
+const debouncedUpdateNote = debounce(async (accountId: string, newNote: string) => {
+  await updateVault((draft) => {
+    const acc = draft.accounts.find((a) => a.id === accountId);
+    if (acc && acc.note !== newNote) {
+      acc.note = newNote;
+    }
+    return draft;
+  });
+}, 1000);
+
+function updateNote(newNote: string) {
+  if (!editingNoteAccountId.value) return;
+  debouncedUpdateNote(editingNoteAccountId.value, newNote);
 }
 
 async function deleteAccount(accountId: string) {
@@ -379,10 +295,7 @@ function toggleReveal(accountId: string) {
   });
 }
 
-async function copyCustomFieldValue(value: string) {
-  await copySecret(value, vault.value?.settings.clipboardClearSeconds ?? 30);
-  showToast("Value copied to clipboard.", "success");
-}
+
 
 function moveSelection(direction: 1 | -1) {
   if (session.value.focusArea === "accounts") {
@@ -418,6 +331,8 @@ function handleKeydown(event: KeyboardEvent) {
     if (document.activeElement === searchInput.value) {
       searchInput.value?.blur();
       setSessionState({ searchKeyword: "", focusArea: "services" });
+    } else if (editingNoteAccountId.value) {
+      closeNoteModal();
     } else {
       lockSession("Locked with Esc.");
     }
@@ -479,23 +394,23 @@ function openSelectedUrl() {
       </p>
 
       <form v-if="!initialized" class="auth-form" @submit.prevent="setupVault">
-        <input v-model="masterPassword" type="password" placeholder="Create master password" autocomplete="new-password" />
-        <input v-model="confirmPassword" type="password" placeholder="Confirm master password" autocomplete="new-password" />
+        <input v-model="pin" type="password" maxlength="6" inputmode="numeric" placeholder="Create 6-digit PIN" autocomplete="new-password" />
+        <input v-model="confirmPin" type="password" maxlength="6" inputmode="numeric" placeholder="Confirm 6-digit PIN" autocomplete="new-password" />
         <button class="primary-btn" :disabled="busy">
           <ShieldCheck :size="17" />
-          Initialize vault
+          Create My Vault
         </button>
       </form>
 
       <form v-else class="auth-form" @submit.prevent="unlock">
-        <input v-model="masterPassword" type="password" placeholder="Master password" autocomplete="current-password" />
+        <input v-model="pin" type="password" maxlength="6" inputmode="numeric" placeholder="Enter 6-digit PIN" autocomplete="current-password" autofocus />
         <button class="primary-btn" :disabled="busy">
           <Unlock :size="17" />
           Unlock
         </button>
-        <button v-if="hasPasskey" type="button" class="secondary-btn" :disabled="busy" @click="unlockWithPasskey">
-          <Fingerprint :size="17" />
-          Unlock with Touch ID
+        <button type="button" class="danger-btn" style="margin-top: 1rem;" @click="resetApp">
+          <Trash2 :size="17" />
+          Reset All Data
         </button>
       </form>
 
@@ -520,24 +435,7 @@ function openSelectedUrl() {
         <div class="status-strip">
           <span><ShieldCheck :size="15" /> Unlocked</span>
           <span v-if="session.clipboardCountdown">Clipboard {{ session.clipboardCountdown }}s</span>
-          <button
-            v-if="prfSupported"
-            class="ghost-btn"
-            :class="{ active: hasPasskey }"
-            :title="hasPasskey ? 'Disable Touch ID Unlock' : 'Enable Touch ID Unlock'"
-            @click="togglePasskey"
-          >
-            <Fingerprint :size="16" />
-          </button>
-          <button
-            class="ghost-btn"
-            :class="{ active: cloudSignedIn }"
-            :title="cloudSignedIn ? 'iCloud Sync: Click to Sync' : 'Sign in to iCloud'"
-            :disabled="busy"
-            @click="handleCloudAction"
-          >
-            <component :is="cloudSignedIn ? Cloud : CloudOff" :size="16" />
-          </button>
+
           <button class="ghost-btn" title="Lock vault" @click="lockSession('Locked manually.')">
             <Lock :size="16" />
           </button>
@@ -591,9 +489,6 @@ function openSelectedUrl() {
                 <button class="ghost-btn" :disabled="!selectedService.url" title="Open website" @click="openSelectedUrl">
                   <Globe2 :size="17" />
                 </button>
-                <button class="danger-btn" title="Delete service" @click="deleteService(selectedService.id)">
-                  <Trash2 :size="17" />
-                </button>
               </div>
             </div>
 
@@ -605,17 +500,14 @@ function openSelectedUrl() {
               @copy="copyAccountPassword"
               @toggle-reveal="toggleReveal"
               @delete="deleteAccount"
+              @open-note="openNoteModal"
             />
 
             <form class="account-form" @submit.prevent="addAccount">
               <div class="form-grid">
                 <div class="form-group">
-                  <label class="form-label">Account</label>
+                  <label class="form-label">Account Label</label>
                   <input v-model="accountForm.label" placeholder="e.g. Admin" />
-                </div>
-                <div class="form-group">
-                  <label class="form-label">Username</label>
-                  <input v-model="accountForm.username" placeholder="Username or email" />
                 </div>
                 <div class="form-group">
                   <label class="form-label">Password</label>
@@ -625,40 +517,6 @@ function openSelectedUrl() {
                       <RefreshCw :size="15" />
                     </button>
                   </div>
-                </div>
-                <div class="form-group">
-                  <label class="form-label">Notes</label>
-                  <input v-model="accountForm.notes" placeholder="Notes" />
-                </div>
-
-                <div class="custom-fields-header">
-                  <span class="eyebrow">Custom Fields</span>
-                  <button type="button" class="secondary-btn compact-btn" @click="addCustomField">
-                    <Plus :size="14" /> Add Field
-                  </button>
-                </div>
-
-                <div
-                  v-for="(field, index) in accountForm.customFields"
-                  :key="index"
-                  class="custom-field-row"
-                >
-                  <div class="form-group">
-                    <label class="form-label">Field Name</label>
-                    <input v-model="field.name" placeholder="Label, e.g. Pin" />
-                  </div>
-                  <div class="form-group">
-                    <label class="form-label">Field Value</label>
-                    <input v-model="field.value" placeholder="Value" />
-                  </div>
-                  <button
-                    type="button"
-                    class="danger-btn delete-field-btn"
-                    title="Remove field"
-                    @click="removeCustomField(index)"
-                  >
-                    <Trash2 :size="15" />
-                  </button>
                 </div>
               </div>
               <button class="secondary-btn">
@@ -679,5 +537,41 @@ function openSelectedUrl() {
     </section>
 
     <div v-if="toast" class="toast" :class="toast.kind">{{ toast.message }}</div>
+
+    <div v-if="newRecoveryKeyStr" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div class="bg-slate-900 border border-slate-700 rounded-xl p-8 max-w-md shadow-2xl flex flex-col gap-4">
+        <h2 class="text-xl font-semibold text-white">Save Your Recovery Key</h2>
+        <p class="text-slate-400 text-sm">
+          This key is the ONLY way to recover your vault if you lose your device or switch to a new one. We cannot recover it for you!
+        </p>
+        <div class="bg-slate-950 border border-slate-800 p-4 rounded-lg text-slate-300 font-mono text-sm break-all">
+          {{ newRecoveryKeyStr }}
+        </div>
+        <button class="primary-btn mt-2" @click="newRecoveryKeyStr = ''">
+          I have saved it securely
+        </button>
+      </div>
+    </div>
+
+    <!-- Secure Note Modal -->
+    <div v-if="editingNoteAccount" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click="closeNoteModal">
+      <div class="bg-slate-900 border border-slate-700 rounded-xl p-6 shadow-2xl flex flex-col w-full max-w-3xl max-h-[90vh]" @click.stop>
+        <div class="flex justify-between items-center mb-4">
+          <div>
+            <span class="eyebrow block mb-1">Secure Note</span>
+            <h2 class="text-xl font-semibold text-white">{{ editingNoteAccount.label || 'Primary' }}</h2>
+          </div>
+          <button class="ghost-btn" title="Close Note" @click="closeNoteModal">
+            <X :size="20" />
+          </button>
+        </div>
+        <div class="overflow-y-auto flex-1 custom-scrollbar">
+          <SecureNoteEditor
+            :model-value="editingNoteAccount.note"
+            @update:model-value="updateNote"
+          />
+        </div>
+      </div>
+    </div>
   </main>
 </template>

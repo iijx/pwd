@@ -1,0 +1,96 @@
+let sessionToken: string | null = null;
+let loggedInUserId: string | null = null;
+
+export async function apiHasUsers(): Promise<boolean> {
+  const res = await fetch('/api/has-users');
+  const data = await res.json();
+  return data.hasUsers;
+}
+
+export async function apiRegister(payload: {
+  userId: string;
+  pbkdf2Salt: string;
+  wrappedKeyMaster: string;
+  wrappedKeyRecovery: string;
+  recoveryKeyHash: string;
+  vaultCiphertext: string;
+  vaultIv: string;
+}) {
+  const res = await fetch('/api/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to register');
+  return data;
+}
+
+export async function apiLogin(payload: { userId: string }) {
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Login failed');
+  
+  sessionToken = data.token;
+  loggedInUserId = payload.userId;
+  
+  return {
+    wrappedKeyMaster: data.wrappedKeyMaster,
+    vaultCiphertext: data.vaultCiphertext,
+    vaultIv: data.vaultIv,
+    pbkdf2Salt: data.pbkdf2Salt,
+  };
+}
+
+export async function apiLoginRecovery(payload: { recoveryKeyHash: string }) {
+  const res = await fetch('/api/login-recovery', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Recovery login failed');
+  
+  sessionToken = data.token;
+  loggedInUserId = data.userId;
+  
+  return {
+    userId: data.userId,
+    wrappedKeyRecovery: data.wrappedKeyRecovery,
+    vaultCiphertext: data.vaultCiphertext,
+    vaultIv: data.vaultIv,
+    pbkdf2Salt: data.pbkdf2Salt,
+  };
+}
+
+export async function apiSyncVault(payload: {
+  vaultCiphertext: string;
+  vaultIv: string;
+  baseVersion: number;
+}) {
+  if (!sessionToken) throw new Error("Not authenticated");
+  
+  const res = await fetch('/api/vault', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${sessionToken}`
+    },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to sync vault');
+  return data;
+}
+
+// Resets localStorage on frontend and clears token
+export async function apiResetAll() {
+  sessionToken = null;
+  loggedInUserId = null;
+  localStorage.clear();
+  window.location.reload();
+}

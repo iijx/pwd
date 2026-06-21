@@ -1,14 +1,5 @@
 export type FocusArea = "search" | "services" | "accounts";
 
-export type CustomFieldType = "text" | "secret" | "url" | "email" | "otp" | "note";
-
-export type CustomField = {
-  id: string;
-  name: string;
-  value: string;
-  type: CustomFieldType;
-};
-
 export type ServiceItem = {
   id: string;
   name: string;
@@ -24,10 +15,8 @@ export type AccountItem = {
   id: string;
   serviceId: string;
   label: string;
-  username: string;
   password: string;
-  notes?: string;
-  customFields: CustomField[];
+  note?: string; // Tiptap Markdown Note
   usageCount: number;
   createdAt: number;
   updatedAt: number;
