@@ -1,7 +1,15 @@
 let sessionToken: string | null = null;
+let loggedInUserId: string | null = null;
+
+const basePath = import.meta.env.BASE_URL || '/';
+
+function getApiUrl(path: string) {
+  // 如果 basePath 是 /password-vision/，这里会自动拼接出 /password-vision/api/...
+  return `${basePath}${path}`;
+}
 
 export async function apiHasUsers(): Promise<boolean> {
-  const res = await fetch('/api/has-users');
+  const res = await fetch(getApiUrl('api/has-users'));
   const data = await res.json();
   return data.hasUsers;
 }
@@ -15,7 +23,7 @@ export async function apiRegister(payload: {
   vaultCiphertext: string;
   vaultIv: string;
 }) {
-  const res = await fetch('/api/register', {
+  const res = await fetch(getApiUrl('api/register'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -26,7 +34,7 @@ export async function apiRegister(payload: {
 }
 
 export async function apiLogin(payload: { userId: string }) {
-  const res = await fetch('/api/login', {
+  const res = await fetch(getApiUrl('api/login'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -45,7 +53,7 @@ export async function apiLogin(payload: { userId: string }) {
 }
 
 export async function apiLoginRecovery(payload: { recoveryKeyHash: string }) {
-  const res = await fetch('/api/login-recovery', {
+  const res = await fetch(getApiUrl('api/login-recovery'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -71,7 +79,7 @@ export async function apiSyncVault(payload: {
 }) {
   if (!sessionToken) throw new Error("Not authenticated");
   
-  const res = await fetch('/api/vault', {
+  const res = await fetch(getApiUrl('api/vault'), {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',

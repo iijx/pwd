@@ -6,7 +6,7 @@ import { VitePWA } from "vite-plugin-pwa";
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: "/password-visiual/",
+  base: "/password-vision/",
   plugins: [
     vue(),
     tailwindcss(),
@@ -24,7 +24,7 @@ export default defineConfig({
         display: "standalone",
         icons: [
           {
-            src: "/favicon.svg",
+            src: "favicon.svg",
             sizes: "any",
             type: "image/svg+xml",
           },
@@ -39,9 +39,10 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": {
+      "/password-vision/api": {
         target: "http://localhost:3000",
         changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/password-vision/, "")
       },
     },
   },
