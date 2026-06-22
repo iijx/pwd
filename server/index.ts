@@ -23,7 +23,7 @@ const app = new Elysia()
   })
   .post(
     '/api/register',
-    async ({ body, set }) => {
+    async ({ body, set, jwt }) => {
       const {
         userId,
         pbkdf2Salt,
@@ -52,9 +52,12 @@ const app = new Elysia()
           vaultIv
         )
 
-        return { success: true }
+        const token = await jwt.sign({ userId })
+
+        return { success: true, token }
       } catch (e: any) {
-        if (e.message.includes('UNIQUE constraint failed')) {
+        const msg = e instanceof Error ? e.message : String(e)
+        if (msg.includes('UNIQUE constraint failed')) {
           set.status = 400
           return { error: 'User already exists' }
         }

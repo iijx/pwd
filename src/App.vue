@@ -19,7 +19,7 @@ import AccountTable from "@/components/vault/AccountTable.vue";
 import SecureNoteEditor from "@/components/vault/SecureNoteEditor.vue";
 import { copySecret } from "@/features/clipboard/clipboard";
 import { generatePassword } from "@/features/vault/passwordGenerator";
-import { persistVault, hasVault, initializeVault, unlockVault } from "@/features/vault/vaultRepository";
+import { persistVault, hasVault, initializeVault, unlockVault, unlockVaultWithRecovery } from "@/features/vault/vaultRepository";
 import { filterServices } from "@/features/vault/search";
 import { serviceInitial, sortServices } from "@/features/vault/ranking";
 import { hostnameFromUrl, now, uid } from "@/lib/utils";
@@ -34,10 +34,13 @@ const booted = ref(false);
 const initialized = ref(false);
 const busy = ref(false);
 const authError = ref("");
+const bootError = ref("");
 const searchInput = ref<HTMLInputElement | null>(null);
 const pin = ref("");
 const confirmPin = ref("");
 const newRecoveryKeyStr = ref("");
+const showRecovery = ref(false);
+const recoveryKeyInput = ref("");
 const editingNoteAccountId = ref<string | null>(null);
 
 const serviceForm = ref({
@@ -80,6 +83,7 @@ function openNoteModal(accountId: string) {
 }
 
 function closeNoteModal() {
+  debouncedUpdateNote.flush();
   editingNoteAccountId.value = null;
 }
 
@@ -109,16 +113,25 @@ watch(selectedAccounts, (nextAccounts) => {
   }
 });
 
+watch(() => session.value.unlocked, (unlocked) => {
+  if (unlocked) {
+    nextTick(() => searchInput.value?.focus());
+  }
+});
+
 onMounted(async () => {
-  initialized.value = await hasVault();
+  try {
+    initialized.value = await hasVault();
+  } catch (e) {
+    bootError.value = e instanceof Error ? e.message : "Failed to connect to server";
+  }
   booted.value = true;
-  await nextTick();
-  searchInput.value?.focus();
   window.addEventListener("keydown", handleKeydown);
 });
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeydown);
+  debouncedUpdateNote.cancel();
 });
 
 async function setupVault() {
@@ -162,6 +175,26 @@ async function unlock() {
   }
 }
 
+async function unlockWithRecovery() {
+  authError.value = "";
+  if (!recoveryKeyInput.value.trim()) {
+    authError.value = "Please enter your recovery key.";
+    return;
+  }
+  busy.value = true;
+  try {
+    const result = await unlockVaultWithRecovery(recoveryKeyInput.value.trim());
+    setUnlocked(result.vault, result.key);
+    recoveryKeyInput.value = "";
+    showRecovery.value = false;
+    showToast("Vault recovered successfully.", "success");
+  } catch (error) {
+    authError.value = error instanceof Error ? error.message : "Recovery failed.";
+  } finally {
+    busy.value = false;
+  }
+}
+
 function resetApp() {
   if (confirm("Are you sure you want to delete all vault data? This cannot be undone!")) {
     localStorage.clear();
@@ -191,11 +224,29 @@ function setUnlocked(nextVault: PlainVault, key: CryptoKey) {
   });
 }
 
+let updateQueue: Promise<void> = Promise.resolve();
+
 async function updateVault(updater: (draft: PlainVault) => PlainVault) {
-  if (!session.value.vault || !session.value.vaultKey) return;
-  const nextVault = updater(JSON.parse(JSON.stringify(session.value.vault)) as PlainVault);
-  setSessionState({ vault: nextVault });
-  await persistVault(nextVault, session.value.vaultKey);
+  // Chain updates sequentially to prevent race conditions on vault version
+  const task = updateQueue.then(async () => {
+    if (!session.value.vault || !session.value.vaultKey) return;
+    const previousVault = session.value.vault;
+    const nextVault = updater(JSON.parse(JSON.stringify(previousVault)) as PlainVault);
+    setSessionState({ vault: nextVault });
+
+    try {
+      await persistVault(nextVault, session.value.vaultKey);
+    } catch (error) {
+      // Revert state if backend sync fails
+      setSessionState({ vault: previousVault });
+      const message = error instanceof Error ? error.message : "Failed to save vault";
+      showToast(message, "error");
+      console.error("Vault sync failed:", error);
+      throw error; // Re-throw so callers know the operation failed
+    }
+  });
+  updateQueue = task.catch(() => {}); // Prevent unhandled rejection from breaking the chain
+  return task;
 }
 
 
@@ -212,14 +263,17 @@ async function addService() {
     updatedAt: now(),
   };
 
-  await updateVault((draft) => {
-    draft.services.push(service);
-    return draft;
-  });
-
-  serviceForm.value = { name: "", url: "" };
-  setSessionState({ selectedServiceId: service.id, selectedAccountId: null });
-  showToast("Service added.", "success");
+  try {
+    await updateVault((draft) => {
+      draft.services.push(service);
+      return draft;
+    });
+    serviceForm.value = { name: "", url: "" };
+    setSessionState({ selectedServiceId: service.id, selectedAccountId: null });
+    showToast("Service added.", "success");
+  } catch {
+    // Error already handled by updateVault (rollback + toast)
+  }
 }
 
 async function addAccount() {
@@ -237,27 +291,34 @@ async function addAccount() {
     updatedAt: now(),
   };
 
-  await updateVault((draft) => {
-    draft.accounts.push(account);
-    return draft;
-  });
-
-  accountForm.value = {
-    label: "",
-    password: "",
-  };
-  setSessionState({ selectedAccountId: account.id, focusArea: "accounts" });
-  showToast("Account added.", "success");
+  try {
+    await updateVault((draft) => {
+      draft.accounts.push(account);
+      return draft;
+    });
+    accountForm.value = {
+      label: "",
+      password: "",
+    };
+    setSessionState({ selectedAccountId: account.id, focusArea: "accounts" });
+    showToast("Account added.", "success");
+  } catch {
+    // Error already handled by updateVault (rollback + toast)
+  }
 }
 
 const debouncedUpdateNote = debounce(async (accountId: string, newNote: string) => {
-  await updateVault((draft) => {
-    const acc = draft.accounts.find((a) => a.id === accountId);
-    if (acc && acc.note !== newNote) {
-      acc.note = newNote;
-    }
-    return draft;
-  });
+  try {
+    await updateVault((draft) => {
+      const acc = draft.accounts.find((a) => a.id === accountId);
+      if (acc && acc.note !== newNote) {
+        acc.note = newNote;
+      }
+      return draft;
+    });
+  } catch {
+    // Error already handled by updateVault
+  }
 }, 1000);
 
 function updateNote(newNote: string) {
@@ -266,22 +327,30 @@ function updateNote(newNote: string) {
 }
 
 async function deleteAccount(accountId: string) {
-  await updateVault((draft) => {
-    draft.accounts = draft.accounts.filter((account) => account.id !== accountId);
-    return draft;
-  });
-  showToast("Account deleted.");
+  try {
+    await updateVault((draft) => {
+      draft.accounts = draft.accounts.filter((account) => account.id !== accountId);
+      return draft;
+    });
+    showToast("Account deleted.");
+  } catch {
+    // Error already handled by updateVault (rollback + toast)
+  }
 }
 
 async function copyAccountPassword(account: AccountItem) {
   await copySecret(account.password, vault.value?.settings.clipboardClearSeconds ?? 30);
-  await updateVault((draft) => {
-    const target = draft.accounts.find((item) => item.id === account.id);
-    const service = draft.services.find((item) => item.id === account.serviceId);
-    if (target) target.usageCount += 1;
-    if (service) service.usageCount += 1;
-    return draft;
-  });
+  try {
+    await updateVault((draft) => {
+      const target = draft.accounts.find((item) => item.id === account.id);
+      const service = draft.services.find((item) => item.id === account.serviceId);
+      if (target) target.usageCount += 1;
+      if (service) service.usageCount += 1;
+      return draft;
+    });
+  } catch {
+    // Error already handled by updateVault
+  }
 }
 
 function toggleReveal(accountId: string) {
@@ -379,7 +448,15 @@ function openSelectedUrl() {
   <main class="vault-app">
     <section v-if="!booted" class="auth-panel">
       <ShieldCheck :size="34" />
-      <h1>Loading vault</h1>
+      <h1 v-if="!bootError">Loading vault</h1>
+      <template v-else>
+        <h1>Connection Error</h1>
+        <p class="muted">{{ bootError }}</p>
+        <button class="primary-btn" @click="window.location.reload()">
+          <RefreshCw :size="17" />
+          Retry
+        </button>
+      </template>
     </section>
 
     <section v-else-if="!session.unlocked" class="auth-panel">
@@ -400,15 +477,35 @@ function openSelectedUrl() {
         </button>
       </form>
 
-      <form v-else class="auth-form" @submit.prevent="unlock">
+      <form v-else-if="!showRecovery" class="auth-form" @submit.prevent="unlock">
         <input v-model="pin" type="password" maxlength="6" inputmode="numeric" placeholder="Enter 6-digit PIN" autocomplete="current-password" autofocus />
         <button class="primary-btn" :disabled="busy">
           <Unlock :size="17" />
           Unlock
         </button>
+        <button type="button" class="text-btn" @click="showRecovery = true">
+          <RefreshCw :size="15" />
+          Recover with recovery key
+        </button>
         <button type="button" class="danger-btn" style="margin-top: 1rem;" @click="resetApp">
           <Trash2 :size="17" />
           Reset All Data
+        </button>
+      </form>
+
+      <form v-else class="auth-form" @submit.prevent="unlockWithRecovery">
+        <textarea
+          v-model="recoveryKeyInput"
+          placeholder="Paste your recovery key here"
+          autocomplete="off"
+          rows="3"
+        ></textarea>
+        <button class="primary-btn" :disabled="busy">
+          <KeyRound :size="17" />
+          Recover Vault
+        </button>
+        <button type="button" class="text-btn" @click="showRecovery = false">
+          Back to PIN unlock
         </button>
       </form>
 

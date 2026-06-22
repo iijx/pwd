@@ -1,6 +1,6 @@
 import { decryptVault, encryptVault } from "@/features/vault/vaultCrypto";
 import { generateVaultKey, wrapVaultKey, generateRecoveryKeyStr, hashRecoveryKeyStr, importRecoveryKey, unwrapVaultKey, deriveMasterKeyFromPin, generateSalt } from "@/features/auth/keyDerivation";
-import { apiRegister, apiLogin, apiSyncVault, apiHasUsers, apiResetAll } from "@/api/backend";
+import { apiRegister, apiLogin, apiLoginRecovery, apiSyncVault, apiHasUsers, apiResetAll } from "@/api/backend";
 import type { PlainVault } from "@/types/vault";
 
 const DEFAULT_ITERATIONS = 310_000;
@@ -87,6 +87,38 @@ export async function unlockVault(pin: string) {
     throw new Error("Invalid PIN or corrupted vault. Decryption failed.");
   }
   
+  return { key: vaultKey, vault };
+}
+
+export async function unlockVaultWithRecovery(recoveryKeyStr: string) {
+  // 1. Hash the recovery key and fetch data from backend
+  const recoveryKeyHash = await hashRecoveryKeyStr(recoveryKeyStr);
+  const { wrappedKeyRecovery, vaultCiphertext, vaultIv } = await apiLoginRecovery({ recoveryKeyHash });
+
+  // 2. Import recovery key as CryptoKey
+  const recoveryKeyCrypto = await importRecoveryKey(recoveryKeyStr);
+
+  // 3. Unwrap vault key
+  const wrappedRecoveryObj = JSON.parse(wrappedKeyRecovery);
+  let vaultKey: CryptoKey;
+  try {
+    vaultKey = await unwrapVaultKey(
+      wrappedRecoveryObj.wrappedBase64,
+      wrappedRecoveryObj.ivBase64,
+      recoveryKeyCrypto
+    );
+  } catch (err) {
+    throw new Error("Invalid recovery key. Failed to unwrap encryption key.");
+  }
+
+  // 4. Decrypt vault
+  let vault: PlainVault;
+  try {
+    vault = await decryptVault(vaultCiphertext, vaultIv, vaultKey);
+  } catch (err) {
+    throw new Error("Failed to decrypt vault with recovery key.");
+  }
+
   return { key: vaultKey, vault };
 }
 

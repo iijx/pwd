@@ -9,6 +9,7 @@ function getApiUrl(path: string) {
 
 export async function apiHasUsers(): Promise<boolean> {
   const res = await fetch(getApiUrl('api/has-users'));
+  if (!res.ok) throw new Error(`Server responded with ${res.status}`);
   const data = await res.json();
   return data.hasUsers;
 }
@@ -29,6 +30,9 @@ export async function apiRegister(payload: {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to register');
+  
+  sessionToken = data.token;
+  
   return data;
 }
 

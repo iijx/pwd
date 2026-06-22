@@ -207,6 +207,23 @@ h2 {
   background: #27191b;
 }
 
+.text-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 0;
+  color: #9aa3af;
+  background: none;
+  border: none;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+.text-btn:hover {
+  color: #cbd3dc;
+}
+
 .vault-shell {
   width: min(1280px, 100%);
   min-height: calc(100svh - 48px);
