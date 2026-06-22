@@ -442,6 +442,10 @@ function openSelectedUrl() {
   if (!selectedService.value?.url) return;
   window.open(selectedService.value.url, "_blank", "noopener,noreferrer");
 }
+
+function reloadPage() {
+  window.location.reload();
+}
 </script>
 
 <template>
@@ -452,7 +456,7 @@ function openSelectedUrl() {
       <template v-else>
         <h1>Connection Error</h1>
         <p class="muted">{{ bootError }}</p>
-        <button class="primary-btn" @click="window.location.reload()">
+        <button class="primary-btn" @click="reloadPage">
           <RefreshCw :size="17" />
           Retry
         </button>
