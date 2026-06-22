@@ -2,9 +2,6 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useStore } from "@tanstack/vue-store";
 import {
-  Eye,
-  EyeOff,
-  Fingerprint,
   Globe2,
   KeyRound,
   Lock,
@@ -234,6 +231,7 @@ async function addAccount() {
     serviceId: selectedService.value.id,
     label: accountForm.value.label.trim() || "Primary",
     password,
+    customFields: [],
     usageCount: 0,
     createdAt: now(),
     updatedAt: now(),
@@ -425,7 +423,7 @@ function openSelectedUrl() {
           <input
             ref="searchInput"
             :value="session.searchKeyword"
-            placeholder="Search services, usernames, custom fields..."
+            placeholder="Search services, accounts, notes..."
             @input="setSessionState({ searchKeyword: ($event.target as HTMLInputElement).value })"
             @focus="setSessionState({ focusArea: 'search' })"
           />

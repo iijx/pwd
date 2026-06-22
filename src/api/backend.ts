@@ -1,5 +1,4 @@
 let sessionToken: string | null = null;
-let loggedInUserId: string | null = null;
 
 export async function apiHasUsers(): Promise<boolean> {
   const res = await fetch('/api/has-users');
@@ -36,8 +35,7 @@ export async function apiLogin(payload: { userId: string }) {
   if (!res.ok) throw new Error(data.error || 'Login failed');
   
   sessionToken = data.token;
-  loggedInUserId = payload.userId;
-  
+
   return {
     wrappedKeyMaster: data.wrappedKeyMaster,
     vaultCiphertext: data.vaultCiphertext,
@@ -56,8 +54,7 @@ export async function apiLoginRecovery(payload: { recoveryKeyHash: string }) {
   if (!res.ok) throw new Error(data.error || 'Recovery login failed');
   
   sessionToken = data.token;
-  loggedInUserId = data.userId;
-  
+
   return {
     userId: data.userId,
     wrappedKeyRecovery: data.wrappedKeyRecovery,
@@ -90,7 +87,6 @@ export async function apiSyncVault(payload: {
 // Resets localStorage on frontend and clears token
 export async function apiResetAll() {
   sessionToken = null;
-  loggedInUserId = null;
   localStorage.clear();
   window.location.reload();
 }

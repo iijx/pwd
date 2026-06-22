@@ -3,60 +3,67 @@ import Suggestion from '@tiptap/suggestion'
 import { VueRenderer } from '@tiptap/vue-3'
 import tippy from 'tippy.js'
 import SlashMenu from './SlashMenu.vue'
+import type { Editor, Range } from '@tiptap/core'
+import type { Instance as TippyInstance } from 'tippy.js'
 
-export const getSuggestionItems = ({ query }: { query: string }) => {
+export type SuggestionItem = {
+  title: string
+  command: (params: { editor: Editor; range: Range }) => void
+}
+
+export const getSuggestionItems = ({ query }: { query: string }): SuggestionItem[] => {
   return [
     {
       title: 'Heading 1',
-      command: ({ editor, range }: any) => {
+      command: ({ editor, range }: { editor: Editor; range: Range }) => {
         editor.chain().focus().deleteRange(range).setNode('heading', { level: 1 }).run()
       },
     },
     {
       title: 'Heading 2',
-      command: ({ editor, range }: any) => {
+      command: ({ editor, range }: { editor: Editor; range: Range }) => {
         editor.chain().focus().deleteRange(range).setNode('heading', { level: 2 }).run()
       },
     },
     {
       title: 'Heading 3',
-      command: ({ editor, range }: any) => {
+      command: ({ editor, range }: { editor: Editor; range: Range }) => {
         editor.chain().focus().deleteRange(range).setNode('heading', { level: 3 }).run()
       },
     },
     {
       title: 'Table',
-      command: ({ editor, range }: any) => {
+      command: ({ editor, range }: { editor: Editor; range: Range }) => {
         editor.chain().focus().deleteRange(range).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
       },
     },
     {
       title: 'Bullet List',
-      command: ({ editor, range }: any) => {
+      command: ({ editor, range }: { editor: Editor; range: Range }) => {
         editor.chain().focus().deleteRange(range).toggleBulletList().run()
       },
     },
     {
       title: 'Numbered List',
-      command: ({ editor, range }: any) => {
+      command: ({ editor, range }: { editor: Editor; range: Range }) => {
         editor.chain().focus().deleteRange(range).toggleOrderedList().run()
       },
     },
     {
       title: 'Blockquote',
-      command: ({ editor, range }: any) => {
+      command: ({ editor, range }: { editor: Editor; range: Range }) => {
         editor.chain().focus().deleteRange(range).toggleBlockquote().run()
       },
     },
     {
       title: 'Code Block',
-      command: ({ editor, range }: any) => {
+      command: ({ editor, range }: { editor: Editor; range: Range }) => {
         editor.chain().focus().deleteRange(range).toggleCodeBlock().run()
       },
     },
     {
       title: 'Divider',
-      command: ({ editor, range }: any) => {
+      command: ({ editor, range }: { editor: Editor; range: Range }) => {
         editor.chain().focus().deleteRange(range).setHorizontalRule().run()
       },
     },
@@ -64,24 +71,30 @@ export const getSuggestionItems = ({ query }: { query: string }) => {
 }
 
 export const renderItems = () => {
-  let component: any
-  let popup: any
+  let component: VueRenderer
+  let popup: TippyInstance[] | undefined
 
   return {
-    onStart: (props: any) => {
+    onStart: (props: Record<string, unknown>) => {
       component = new VueRenderer(SlashMenu, {
         props,
-        editor: props.editor,
+        editor: props.editor as Editor,
       })
 
-      if (!props.clientRect) {
+      const clientRect = props.clientRect as (() => DOMRect) | undefined
+      if (!clientRect) {
+        return
+      }
+
+      const element = component.element
+      if (!element) {
         return
       }
 
       popup = tippy('body', {
-        getReferenceClientRect: props.clientRect,
+        getReferenceClientRect: clientRect,
         appendTo: () => document.body,
-        content: component.element,
+        content: element,
         showOnCreate: true,
         interactive: true,
         trigger: 'manual',
@@ -89,29 +102,30 @@ export const renderItems = () => {
       })
     },
 
-    onUpdate(props: any) {
+    onUpdate(props: Record<string, unknown>) {
       component.updateProps(props)
 
-      if (!props.clientRect) {
+      const clientRect = props.clientRect as (() => DOMRect) | undefined
+      if (!clientRect || !popup) {
         return
       }
 
       popup[0].setProps({
-        getReferenceClientRect: props.clientRect,
+        getReferenceClientRect: clientRect,
       })
     },
 
-    onKeyDown(props: any) {
+    onKeyDown(props: { event: KeyboardEvent }) {
       if (props.event.key === 'Escape') {
-        popup[0].hide()
+        popup?.[0].hide()
         return true
       }
 
-      return component.ref?.onKeyDown(props)
+      return component.ref?.onKeyDown(props) ?? false
     },
 
     onExit() {
-      popup[0].destroy()
+      popup?.[0].destroy()
       component.destroy()
     },
   }
@@ -124,7 +138,7 @@ export const SlashCommands = Extension.create({
     return {
       suggestion: {
         char: '/',
-        command: ({ editor, range, props }: any) => {
+        command: ({ editor, range, props }: { editor: Editor; range: Range; props: SuggestionItem }) => {
           props.command({ editor, range })
         },
       },

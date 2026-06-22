@@ -11,12 +11,20 @@ export type ServiceItem = {
   updatedAt: number;
 };
 
+export type AccountCustomField = {
+  name: string;
+  value: string;
+};
+
 export type AccountItem = {
   id: string;
   serviceId: string;
   label: string;
+  username?: string;
   password: string;
   note?: string; // Tiptap Markdown Note
+  notes?: string; // Plain-text search fallback / legacy
+  customFields: AccountCustomField[];
   usageCount: number;
   createdAt: number;
   updatedAt: number;

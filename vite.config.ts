@@ -11,6 +11,9 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: "autoUpdate",
+      workbox: {
+        maximumFileSizeToCacheInBytes: 2 * 1024 * 1024,
+      },
       manifest: {
         name: "Floating Key Vault",
         short_name: "Key Vault",

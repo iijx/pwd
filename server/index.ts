@@ -1,6 +1,7 @@
 import { cors } from '@elysiajs/cors'
 import { jwt } from '@elysiajs/jwt'
 import { staticPlugin } from '@elysiajs/static'
+import { Elysia, t } from 'elysia'
 import { db, UserRow } from './db'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-me-in-production'

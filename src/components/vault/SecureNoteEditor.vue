@@ -9,6 +9,7 @@ import { TableCell } from '@tiptap/extension-table-cell'
 import { Markdown } from 'tiptap-markdown'
 import { watch, onBeforeUnmount } from 'vue'
 import { SlashCommands, getSuggestionItems, renderItems } from './slashCommand'
+import type { Editor } from '@tiptap/core'
 
 const props = defineProps<{
   modelValue: string | undefined
@@ -17,6 +18,11 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: string]
 }>()
+
+function getMarkdown(editor: Editor): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (editor.storage as any).markdown?.getMarkdown() ?? ''
+}
 
 const editor = useEditor({
   content: props.modelValue || '',
@@ -27,35 +33,35 @@ const editor = useEditor({
     TableRow,
     TableHeader,
     TableCell,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     SlashCommands.configure({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       suggestion: {
-        items: getSuggestionItems,
-        render: renderItems,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        items: getSuggestionItems as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        render: renderItems as any,
       },
-    }),
+    } as any),
     Placeholder.configure({
       placeholder: 'Type \'/\' for commands, \'# \' for H1, or just start writing...',
     })
   ],
   onUpdate: ({ editor }) => {
-    emit('update:modelValue', editor.storage.markdown.getMarkdown())
+    emit('update:modelValue', getMarkdown(editor))
   },
 })
 
 watch(() => props.modelValue, (value) => {
   // Prevent cursor jumping by checking if content is actually different
-  const isSame = editor.value?.storage.markdown.getMarkdown() === value
-  if (isSame) return
+  const current = editor.value ? getMarkdown(editor.value) : ''
+  if (current === value) return
 
-  if (editor.value) {
-    editor.value.commands.setContent(value || '', false)
-  }
+  editor.value?.commands.setContent(value || '')
 })
 
 onBeforeUnmount(() => {
-  if (editor.value) {
-    editor.value.destroy()
-  }
+  editor.value?.destroy()
 })
 </script>
 

@@ -17,7 +17,7 @@ export function filterServices(services: ServiceItem[], accounts: AccountItem[],
         account.label,
         account.username,
         account.notes,
-        ...account.customFields.map((field) => `${field.name} ${field.value}`),
+        ...account.customFields.map((field: { name: string; value: string }) => `${field.name} ${field.value}`),
       ]
         .filter(Boolean)
         .join(" ")

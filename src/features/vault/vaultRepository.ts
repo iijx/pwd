@@ -61,7 +61,7 @@ export async function initializeVault(pin: string) {
 
 export async function unlockVault(pin: string) {
   // 1. Fetch user data from backend
-  const { pbkdf2Salt, wrappedKeyMaster, vaultCiphertext, vaultIv } = await apiLogin(FIXED_USER_ID);
+  const { pbkdf2Salt, wrappedKeyMaster, vaultCiphertext, vaultIv } = await apiLogin({ userId: FIXED_USER_ID });
 
   // 2. Derive Master Key from PIN
   const masterKey = await deriveMasterKeyFromPin(pin, pbkdf2Salt, DEFAULT_ITERATIONS);
