@@ -1,5 +1,4 @@
 let sessionToken: string | null = null;
-let loggedInUserId: string | null = null;
 
 const basePath = import.meta.env.BASE_URL || '/';
 
@@ -41,7 +40,7 @@ export async function apiLogin(payload: { userId: string }) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Login failed');
-  
+
   sessionToken = data.token;
 
   return {
@@ -60,7 +59,7 @@ export async function apiLoginRecovery(payload: { recoveryKeyHash: string }) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Recovery login failed');
-  
+
   sessionToken = data.token;
 
   return {
@@ -78,7 +77,7 @@ export async function apiSyncVault(payload: {
   baseVersion: number;
 }) {
   if (!sessionToken) throw new Error("Not authenticated");
-  
+
   const res = await fetch(getApiUrl('api/vault'), {
     method: 'PUT',
     headers: {
