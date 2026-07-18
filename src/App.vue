@@ -5,9 +5,11 @@ import {
   Globe2,
   KeyRound,
   Lock,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
+  Settings,
   ShieldCheck,
   Trash2,
   Unlock,
@@ -19,7 +21,7 @@ import AccountTable from "@/components/vault/AccountTable.vue";
 import SecureNoteEditor from "@/components/vault/SecureNoteEditor.vue";
 import { copySecret } from "@/features/clipboard/clipboard";
 import { generatePassword } from "@/features/vault/passwordGenerator";
-import { persistVault, hasVault, initializeVault, unlockVault, unlockVaultWithRecovery } from "@/features/vault/vaultRepository";
+import { persistVault, hasVault, initializeVault, unlockVault, unlockVaultWithRecovery, changePin, regenerateRecoveryKey, resetAllData } from "@/features/vault/vaultRepository";
 import { filterServices } from "@/features/vault/search";
 import { serviceInitial, sortServices } from "@/features/vault/ranking";
 import { hostnameFromUrl, now, uid } from "@/lib/utils";
@@ -50,7 +52,33 @@ const serviceForm = ref({
 
 const accountForm = ref({
   label: "",
+  username: "",
   password: "",
+});
+
+const editingAccount = ref<AccountItem | null>(null);
+const editAccountForm = ref({
+  label: "",
+  username: "",
+  password: "",
+});
+
+const editingService = ref<ServiceItem | null>(null);
+const editServiceForm = ref({
+  name: "",
+  url: "",
+});
+
+const showSettings = ref(false);
+const settingsBusy = ref(false);
+const settingsForm = ref({
+  clipboardClearSeconds: 30,
+  autoLockMinutes: 5,
+});
+const pinForm = ref({
+  current: "",
+  next: "",
+  confirm: "",
 });
 
 const vault = computed(() => session.value.vault);
@@ -78,6 +106,10 @@ const editingNoteAccount = computed(() => {
   return accounts.value.find(a => a.id === editingNoteAccountId.value) || null;
 });
 
+const anyModalOpen = computed(() =>
+  !!(editingNoteAccountId.value || editingAccount.value || editingService.value || showSettings.value || newRecoveryKeyStr.value),
+);
+
 function openNoteModal(accountId: string) {
   editingNoteAccountId.value = accountId;
 }
@@ -85,6 +117,167 @@ function openNoteModal(accountId: string) {
 function closeNoteModal() {
   debouncedUpdateNote.flush();
   editingNoteAccountId.value = null;
+}
+
+function openEditAccount(account: AccountItem) {
+  editAccountForm.value = {
+    label: account.label,
+    username: account.username ?? "",
+    password: "",
+  };
+  editingAccount.value = account;
+}
+
+function closeEditAccount() {
+  editingAccount.value = null;
+}
+
+async function saveEditedAccount() {
+  const target = editingAccount.value;
+  if (!target) return;
+
+  try {
+    await updateVault((draft) => {
+      const account = draft.accounts.find((item) => item.id === target.id);
+      if (!account) return draft;
+      account.label = editAccountForm.value.label.trim() || "Primary";
+      account.username = editAccountForm.value.username.trim() || undefined;
+      if (editAccountForm.value.password) {
+        account.password = editAccountForm.value.password;
+      }
+      account.updatedAt = now();
+      return draft;
+    });
+    closeEditAccount();
+    showToast("Account updated.", "success");
+  } catch {
+    // Error already handled by updateVault (rollback + toast)
+  }
+}
+
+function openEditService() {
+  if (!selectedService.value) return;
+  editServiceForm.value = {
+    name: selectedService.value.name,
+    url: selectedService.value.url ?? "",
+  };
+  editingService.value = selectedService.value;
+}
+
+function closeEditService() {
+  editingService.value = null;
+}
+
+async function saveEditedService() {
+  const target = editingService.value;
+  const name = editServiceForm.value.name.trim();
+  if (!target || !name) return;
+
+  try {
+    await updateVault((draft) => {
+      const service = draft.services.find((item) => item.id === target.id);
+      if (!service) return draft;
+      service.name = name;
+      service.url = editServiceForm.value.url.trim() || undefined;
+      service.updatedAt = now();
+      return draft;
+    });
+    closeEditService();
+    showToast("Service updated.", "success");
+  } catch {
+    // Error already handled by updateVault (rollback + toast)
+  }
+}
+
+async function deleteSelectedService() {
+  const target = selectedService.value;
+  if (!target) return;
+  const accountCount = accounts.value.filter((account) => account.serviceId === target.id).length;
+  if (!confirm(`Delete service "${target.name}" and its ${accountCount} account(s)? This cannot be undone.`)) return;
+
+  try {
+    await updateVault((draft) => {
+      draft.services = draft.services.filter((service) => service.id !== target.id);
+      draft.accounts = draft.accounts.filter((account) => account.serviceId !== target.id);
+      return draft;
+    });
+    showToast("Service deleted.");
+  } catch {
+    // Error already handled by updateVault (rollback + toast)
+  }
+}
+
+async function copyAccountUsername(account: AccountItem) {
+  if (!account.username) return;
+  await navigator.clipboard.writeText(account.username);
+  showToast("Username copied.", "success");
+}
+
+function openSettings() {
+  if (!vault.value) return;
+  settingsForm.value = {
+    clipboardClearSeconds: vault.value.settings.clipboardClearSeconds,
+    autoLockMinutes: vault.value.settings.autoLockMinutes,
+  };
+  pinForm.value = { current: "", next: "", confirm: "" };
+  showSettings.value = true;
+}
+
+function closeSettings() {
+  showSettings.value = false;
+}
+
+async function saveSettings() {
+  const clipboardClearSeconds = Math.min(Math.max(Math.round(settingsForm.value.clipboardClearSeconds) || 30, 5), 300);
+  const autoLockMinutes = Math.min(Math.max(Math.round(settingsForm.value.autoLockMinutes) || 0, 0), 120);
+
+  try {
+    await updateVault((draft) => {
+      draft.settings.clipboardClearSeconds = clipboardClearSeconds;
+      draft.settings.autoLockMinutes = autoLockMinutes;
+      return draft;
+    });
+    showToast("Settings saved.", "success");
+  } catch {
+    // Error already handled by updateVault (rollback + toast)
+  }
+}
+
+async function submitChangePin() {
+  if (pinForm.value.next.length !== 6 || !/^\d+$/.test(pinForm.value.next)) {
+    showToast("New PIN must be exactly 6 digits.", "error");
+    return;
+  }
+  if (pinForm.value.next !== pinForm.value.confirm) {
+    showToast("New PINs do not match.", "error");
+    return;
+  }
+  if (!session.value.vaultKey) return;
+
+  settingsBusy.value = true;
+  try {
+    await changePin(pinForm.value.current, pinForm.value.next, session.value.vaultKey);
+    pinForm.value = { current: "", next: "", confirm: "" };
+    showToast("PIN changed successfully.", "success");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Failed to change PIN.", "error");
+  } finally {
+    settingsBusy.value = false;
+  }
+}
+
+async function regenerateRecovery() {
+  if (!session.value.vaultKey) return;
+  if (!confirm("Regenerating will invalidate your current recovery key. Continue?")) return;
+
+  settingsBusy.value = true;
+  try {
+    newRecoveryKeyStr.value = await regenerateRecoveryKey(session.value.vaultKey);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Failed to regenerate recovery key.", "error");
+  } finally {
+    settingsBusy.value = false;
+  }
 }
 
 watch(visibleServices, (nextServices) => {
@@ -116,8 +309,44 @@ watch(selectedAccounts, (nextAccounts) => {
 watch(() => session.value.unlocked, (unlocked) => {
   if (unlocked) {
     nextTick(() => searchInput.value?.focus());
+    armAutoLock();
+  } else {
+    clearAutoLock();
   }
 });
+
+watch(
+  () => vault.value?.settings.autoLockMinutes,
+  () => {
+    if (session.value.unlocked) armAutoLock();
+  },
+);
+
+let autoLockTimer: number | undefined;
+let lastAutoLockArm = 0;
+
+function clearAutoLock() {
+  window.clearTimeout(autoLockTimer);
+  autoLockTimer = undefined;
+}
+
+function armAutoLock() {
+  clearAutoLock();
+  if (!sessionStore.state.unlocked) return;
+  const minutes = sessionStore.state.vault?.settings.autoLockMinutes ?? 5;
+  if (minutes <= 0) return; // 0 = never auto-lock
+  autoLockTimer = window.setTimeout(() => {
+    lockSession("Locked due to inactivity.");
+  }, minutes * 60_000);
+}
+
+// Throttled activity handler — resets the inactivity timer at most once every 5s
+function onUserActivity() {
+  const nowTs = Date.now();
+  if (nowTs - lastAutoLockArm < 5000) return;
+  lastAutoLockArm = nowTs;
+  armAutoLock();
+}
 
 onMounted(async () => {
   try {
@@ -127,10 +356,15 @@ onMounted(async () => {
   }
   booted.value = true;
   window.addEventListener("keydown", handleKeydown);
+  window.addEventListener("pointermove", onUserActivity, { passive: true });
+  window.addEventListener("pointerdown", onUserActivity, { passive: true });
 });
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeydown);
+  window.removeEventListener("pointermove", onUserActivity);
+  window.removeEventListener("pointerdown", onUserActivity);
+  clearAutoLock();
   debouncedUpdateNote.cancel();
 });
 
@@ -195,16 +429,19 @@ async function unlockWithRecovery() {
   }
 }
 
-function resetApp() {
-  if (confirm("Are you sure you want to delete all vault data? This cannot be undone!")) {
-    localStorage.clear();
-    indexedDB.databases().then((dbs) => {
-      dbs.forEach((db) => {
-        if (db.name) indexedDB.deleteDatabase(db.name);
-      });
-      window.location.reload();
-    });
+async function resetApp() {
+  if (!confirm("Are you sure you want to delete all vault data? This cannot be undone!")) return;
+  try {
+    await resetAllData();
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Failed to reset server data.", "error");
+    return;
   }
+  const dbs = await indexedDB.databases();
+  dbs.forEach((db) => {
+    if (db.name) indexedDB.deleteDatabase(db.name);
+  });
+  window.location.reload();
 }
 
 function setUnlocked(nextVault: PlainVault, key: CryptoKey) {
@@ -284,6 +521,7 @@ async function addAccount() {
     id: uid("acct"),
     serviceId: selectedService.value.id,
     label: accountForm.value.label.trim() || "Primary",
+    username: accountForm.value.username.trim() || undefined,
     password,
     customFields: [],
     usageCount: 0,
@@ -298,6 +536,7 @@ async function addAccount() {
     });
     accountForm.value = {
       label: "",
+      username: "",
       password: "",
     };
     setSessionState({ selectedAccountId: account.id, focusArea: "accounts" });
@@ -400,13 +639,21 @@ function handleKeydown(event: KeyboardEvent) {
       setSessionState({ searchKeyword: "", focusArea: "services" });
     } else if (editingNoteAccountId.value) {
       closeNoteModal();
+    } else if (editingAccount.value) {
+      closeEditAccount();
+    } else if (editingService.value) {
+      closeEditService();
+    } else if (showSettings.value) {
+      closeSettings();
+    } else if (newRecoveryKeyStr.value) {
+      // Keep the recovery key modal open — it must be dismissed explicitly
     } else {
       lockSession("Locked with Esc.");
     }
     return;
   }
 
-  if (isTyping) return;
+  if (isTyping || anyModalOpen.value) return;
 
   if (event.key === "j" || event.key === "ArrowDown") {
     event.preventDefault();
@@ -535,6 +782,9 @@ function reloadPage() {
           <span><ShieldCheck :size="15" /> Unlocked</span>
           <span v-if="session.clipboardCountdown">Clipboard {{ session.clipboardCountdown }}s</span>
 
+          <button class="ghost-btn" title="Settings" @click="openSettings">
+            <Settings :size="16" />
+          </button>
           <button class="ghost-btn" title="Lock vault" @click="lockSession('Locked manually.')">
             <Lock :size="16" />
           </button>
@@ -588,6 +838,12 @@ function reloadPage() {
                 <button class="ghost-btn" :disabled="!selectedService.url" title="Open website" @click="openSelectedUrl">
                   <Globe2 :size="17" />
                 </button>
+                <button class="ghost-btn" title="Edit service" @click="openEditService">
+                  <Pencil :size="17" />
+                </button>
+                <button class="danger-btn" title="Delete service" @click="deleteSelectedService">
+                  <Trash2 :size="17" />
+                </button>
               </div>
             </div>
 
@@ -597,7 +853,9 @@ function reloadPage() {
               :revealed-ids="session.revealedAccountIds"
               @select="setSessionState({ selectedAccountId: $event, focusArea: 'accounts' })"
               @copy="copyAccountPassword"
+              @copy-username="copyAccountUsername"
               @toggle-reveal="toggleReveal"
+              @edit="openEditAccount"
               @delete="deleteAccount"
               @open-note="openNoteModal"
             />
@@ -607,6 +865,10 @@ function reloadPage() {
                 <div class="form-group">
                   <label class="form-label">Account Label</label>
                   <input v-model="accountForm.label" placeholder="e.g. Admin" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Username</label>
+                  <input v-model="accountForm.username" placeholder="e.g. you@example.com" />
                 </div>
                 <div class="form-group">
                   <label class="form-label">Password</label>
@@ -669,6 +931,121 @@ function reloadPage() {
             :model-value="editingNoteAccount.note"
             @update:model-value="updateNote"
           />
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit Account Modal -->
+    <div v-if="editingAccount" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click="closeEditAccount">
+      <div class="bg-slate-900 border border-slate-700 rounded-xl p-6 shadow-2xl flex flex-col gap-4 w-full max-w-md" @click.stop>
+        <div class="flex justify-between items-center">
+          <h2 class="text-xl font-semibold text-white">Edit Account</h2>
+          <button class="ghost-btn" title="Close" @click="closeEditAccount">
+            <X :size="20" />
+          </button>
+        </div>
+        <form class="flex flex-col gap-4" @submit.prevent="saveEditedAccount">
+          <div class="form-group">
+            <label class="form-label">Account Label</label>
+            <input v-model="editAccountForm.label" placeholder="e.g. Admin" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Username</label>
+            <input v-model="editAccountForm.username" placeholder="e.g. you@example.com" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">New Password (leave empty to keep current)</label>
+            <div class="password-input">
+              <input v-model="editAccountForm.password" placeholder="••••••••" />
+              <button type="button" title="Generate password" class="flex items-center justify-center" @click="editAccountForm.password = generatePassword()">
+                <RefreshCw :size="15" />
+              </button>
+            </div>
+          </div>
+          <button class="primary-btn" type="submit">Save Changes</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Edit Service Modal -->
+    <div v-if="editingService" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click="closeEditService">
+      <div class="bg-slate-900 border border-slate-700 rounded-xl p-6 shadow-2xl flex flex-col gap-4 w-full max-w-md" @click.stop>
+        <div class="flex justify-between items-center">
+          <h2 class="text-xl font-semibold text-white">Edit Service</h2>
+          <button class="ghost-btn" title="Close" @click="closeEditService">
+            <X :size="20" />
+          </button>
+        </div>
+        <form class="flex flex-col gap-4" @submit.prevent="saveEditedService">
+          <div class="form-group">
+            <label class="form-label">Service Name</label>
+            <input v-model="editServiceForm.name" placeholder="Service name" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Website URL</label>
+            <input v-model="editServiceForm.url" placeholder="https://example.com" />
+          </div>
+          <button class="primary-btn" type="submit">Save Changes</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div v-if="showSettings" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click="closeSettings">
+      <div class="bg-slate-900 border border-slate-700 rounded-xl p-6 shadow-2xl flex flex-col w-full max-w-md max-h-[90vh]" @click.stop>
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-xl font-semibold text-white">Settings</h2>
+          <button class="ghost-btn" title="Close" @click="closeSettings">
+            <X :size="20" />
+          </button>
+        </div>
+        <div class="overflow-y-auto flex-1 custom-scrollbar flex flex-col gap-6">
+          <section class="flex flex-col gap-3">
+            <span class="eyebrow">Vault</span>
+            <div class="form-group">
+              <label class="form-label">Clipboard clear delay (seconds)</label>
+              <input v-model.number="settingsForm.clipboardClearSeconds" type="number" min="5" max="300" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Auto-lock after inactivity</label>
+              <select v-model.number="settingsForm.autoLockMinutes">
+                <option :value="1">1 minute</option>
+                <option :value="5">5 minutes</option>
+                <option :value="15">15 minutes</option>
+                <option :value="30">30 minutes</option>
+                <option :value="60">1 hour</option>
+                <option :value="0">Never</option>
+              </select>
+            </div>
+            <button class="secondary-btn" @click="saveSettings">Save Settings</button>
+          </section>
+
+          <section class="flex flex-col gap-3 border-t border-slate-800 pt-4">
+            <span class="eyebrow">Change PIN</span>
+            <form class="flex flex-col gap-3" @submit.prevent="submitChangePin">
+              <input v-model="pinForm.current" type="password" maxlength="6" inputmode="numeric" placeholder="Current PIN" autocomplete="current-password" />
+              <input v-model="pinForm.next" type="password" maxlength="6" inputmode="numeric" placeholder="New 6-digit PIN" autocomplete="new-password" />
+              <input v-model="pinForm.confirm" type="password" maxlength="6" inputmode="numeric" placeholder="Confirm new PIN" autocomplete="new-password" />
+              <button class="secondary-btn" type="submit" :disabled="settingsBusy">Change PIN</button>
+            </form>
+          </section>
+
+          <section class="flex flex-col gap-3 border-t border-slate-800 pt-4">
+            <span class="eyebrow">Recovery Key</span>
+            <p class="muted small">Regenerating invalidates your current recovery key and shows the new one once.</p>
+            <button class="secondary-btn" :disabled="settingsBusy" @click="regenerateRecovery">
+              <RefreshCw :size="15" />
+              Regenerate Recovery Key
+            </button>
+          </section>
+
+          <section class="flex flex-col gap-3 border-t border-slate-800 pt-4">
+            <span class="eyebrow">Danger Zone</span>
+            <button class="danger-btn" style="min-height: 38px;" @click="resetApp">
+              <Trash2 :size="15" />
+              Reset All Data
+            </button>
+          </section>
         </div>
       </div>
     </div>

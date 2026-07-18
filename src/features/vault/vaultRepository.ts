@@ -1,6 +1,6 @@
 import { decryptVault, encryptVault } from "@/features/vault/vaultCrypto";
 import { generateVaultKey, wrapVaultKey, generateRecoveryKeyStr, hashRecoveryKeyStr, importRecoveryKey, unwrapVaultKey, deriveMasterKeyFromPin, generateSalt } from "@/features/auth/keyDerivation";
-import { apiRegister, apiLogin, apiLoginRecovery, apiSyncVault, apiHasUsers, apiResetAll } from "@/api/backend";
+import { apiRegister, apiLogin, apiLoginRecovery, apiSyncVault, apiHasUsers, apiResetAll, apiUpdateKeys } from "@/api/backend";
 import type { PlainVault } from "@/types/vault";
 
 const DEFAULT_ITERATIONS = 310_000;
@@ -137,4 +137,43 @@ export async function persistVault(vault: PlainVault, key: CryptoKey) {
     vaultIv: encryptedPayload.iv,
     baseVersion: baseVersion, // optimistic locking against the old version
   });
+}
+
+export async function changePin(currentPin: string, newPin: string, vaultKey: CryptoKey) {
+  // 1. Re-fetch the wrapped master key and verify the current PIN before re-wrapping
+  const { pbkdf2Salt, wrappedKeyMaster } = await apiLogin({ userId: FIXED_USER_ID });
+  const currentMasterKey = await deriveMasterKeyFromPin(currentPin, pbkdf2Salt, DEFAULT_ITERATIONS);
+  const wrappedMasterObj = JSON.parse(wrappedKeyMaster);
+  try {
+    await unwrapVaultKey(wrappedMasterObj.wrappedBase64, wrappedMasterObj.ivBase64, currentMasterKey);
+  } catch {
+    throw new Error("Current PIN is incorrect.");
+  }
+
+  // 2. Derive a new master key from a fresh salt and re-wrap the existing vault key
+  const newSalt = generateSalt(32);
+  const newMasterKey = await deriveMasterKeyFromPin(newPin, newSalt, DEFAULT_ITERATIONS);
+  const newWrappedMaster = await wrapVaultKey(vaultKey, newMasterKey);
+
+  // 3. Persist the new salt + wrapped key on the backend
+  await apiUpdateKeys({
+    pbkdf2Salt: newSalt,
+    wrappedKeyMaster: JSON.stringify(newWrappedMaster),
+  });
+}
+
+export async function regenerateRecoveryKey(vaultKey: CryptoKey) {
+  // 1. Generate a new recovery key and wrap the existing vault key with it
+  const recoveryKeyStr = generateRecoveryKeyStr();
+  const recoveryKeyHash = await hashRecoveryKeyStr(recoveryKeyStr);
+  const recoveryKeyCrypto = await importRecoveryKey(recoveryKeyStr);
+  const wrappedRecovery = await wrapVaultKey(vaultKey, recoveryKeyCrypto);
+
+  // 2. Persist on the backend — the old recovery key is invalidated from this point
+  await apiUpdateKeys({
+    wrappedKeyRecovery: JSON.stringify(wrappedRecovery),
+    recoveryKeyHash,
+  });
+
+  return recoveryKeyStr;
 }

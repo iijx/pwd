@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h } from "vue";
-import { Eye, EyeOff, KeyRound, MousePointerClick, Trash2, FileText } from "lucide-vue-next";
+import { Eye, EyeOff, KeyRound, MousePointerClick, Pencil, Trash2, FileText } from "lucide-vue-next";
 import {
   FlexRender,
   createColumnHelper,
@@ -18,7 +18,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [id: string];
   copy: [account: AccountItem];
+  copyUsername: [account: AccountItem];
   toggleReveal: [id: string];
+  edit: [account: AccountItem];
   delete: [id: string];
   openNote: [id: string];
 }>();
@@ -29,6 +31,26 @@ const columns = [
   column.accessor("label", {
     header: "Account",
     cell: (info) => info.getValue() || "Primary",
+  }),
+
+  column.accessor("username", {
+    header: "Username",
+    cell: (info) => {
+      const account = info.row.original;
+      if (!account.username) return h("span", { class: "text-slate-500" }, "—");
+      return h(
+        "button",
+        {
+          class: "font-mono text-[13px] hover:text-white transition-colors",
+          title: "Copy username",
+          onClick: (event: MouseEvent) => {
+            event.stopPropagation();
+            emit("copyUsername", account);
+          },
+        },
+        account.username,
+      );
+    },
   }),
 
   column.accessor("password", {
@@ -70,6 +92,18 @@ const columns = [
             },
           },
           h(FileText, { size: 16 }),
+        ),
+        h(
+          "button",
+          {
+            class: "icon-btn",
+            title: "Edit account",
+            onClick: (event: MouseEvent) => {
+              event.stopPropagation();
+              emit("edit", account);
+            },
+          },
+          h(Pencil, { size: 16 }),
         ),
         h(
           "button",

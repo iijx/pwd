@@ -21,6 +21,10 @@ const app = new Elysia()
     const result = query.get() as { count: number }
     return { hasUsers: result.count > 0 }
   })
+  .post('/api/reset-all', async () => {
+    db.run(`DELETE FROM users`)
+    return { success: true }
+  })
   .post(
     '/api/register',
     async ({ body, set, jwt }) => {
@@ -208,6 +212,53 @@ const app = new Elysia()
         vaultCiphertext: t.String(),
         vaultIv: t.String(),
         baseVersion: t.Number(),
+      }),
+    }
+  )
+  .put(
+    '/api/keys',
+    async ({ user, body, set }) => {
+      if (!user) {
+        set.status = 401
+        return { error: 'Unauthorized' }
+      }
+
+      const fields: string[] = []
+      const values: string[] = []
+
+      if (body.pbkdf2Salt !== undefined) {
+        fields.push('pbkdf2_salt = ?')
+        values.push(body.pbkdf2Salt)
+      }
+      if (body.wrappedKeyMaster !== undefined) {
+        fields.push('wrapped_key_master = ?')
+        values.push(body.wrappedKeyMaster)
+      }
+      if (body.wrappedKeyRecovery !== undefined) {
+        fields.push('wrapped_key_recovery = ?')
+        values.push(body.wrappedKeyRecovery)
+      }
+      if (body.recoveryKeyHash !== undefined) {
+        fields.push('recovery_key_hash = ?')
+        values.push(body.recoveryKeyHash)
+      }
+
+      if (!fields.length) {
+        set.status = 400
+        return { error: 'No fields to update' }
+      }
+
+      const update = db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`)
+      update.run(...values, user)
+
+      return { success: true }
+    },
+    {
+      body: t.Object({
+        pbkdf2Salt: t.Optional(t.String()),
+        wrappedKeyMaster: t.Optional(t.String()),
+        wrappedKeyRecovery: t.Optional(t.String()),
+        recoveryKeyHash: t.Optional(t.String()),
       }),
     }
   )

@@ -95,9 +95,34 @@ export async function apiSyncVault(payload: {
   return data;
 }
 
-// Resets localStorage on frontend and clears token
+export async function apiUpdateKeys(payload: {
+  pbkdf2Salt?: string;
+  wrappedKeyMaster?: string;
+  wrappedKeyRecovery?: string;
+  recoveryKeyHash?: string;
+}) {
+  if (!sessionToken) throw new Error("Not authenticated");
+
+  const res = await fetch(getApiUrl('api/keys'), {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${sessionToken}`
+    },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to update keys');
+  return data;
+}
+
+// Deletes all vault data on the server, then clears local state
 export async function apiResetAll() {
-  sessionToken = null;
-  localStorage.clear();
-  window.location.reload();
+  try {
+    const res = await fetch(getApiUrl('api/reset-all'), { method: 'POST' });
+    if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+  } finally {
+    sessionToken = null;
+    localStorage.clear();
+  }
 }
