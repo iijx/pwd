@@ -17,9 +17,6 @@ fi
 echo "📦 Installing dependencies..."
 bun install
 
-echo "🏗️ Building frontend..."
-bun run build
-
 echo "🔄 Restarting backend service with pm2..."
 # 检查 pm2 是否全局安装
 if ! command -v pm2 &> /dev/null; then
