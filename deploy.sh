@@ -27,13 +27,13 @@ if ! command -v pm2 &> /dev/null; then
     bun add -g pm2
 fi
 
-# 如果 password-vision 已经在 pm2 列表中则重启，否则新建
-if pm2 describe password-vision > /dev/null 2>&1; then
-  pm2 restart password-vision
+# 如果 pwd 已经在 pm2 列表中则重启，否则新建
+if pm2 describe pwd > /dev/null 2>&1; then
+  pm2 restart pwd
 else
   echo "Starting new pm2 instance..."
   # pm2 默认会加载当前目录的 .env 文件
-  pm2 start server/index.ts --name "password-vision" --interpreter ~/.bun/bin/bun
+  pm2 start server/index.ts --name "pwd" --interpreter ~/.bun/bin/bun
   pm2 save
 fi
 

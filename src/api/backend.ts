@@ -3,7 +3,7 @@ let sessionToken: string | null = null;
 const basePath = import.meta.env.BASE_URL || '/';
 
 function getApiUrl(path: string) {
-  // 如果 basePath 是 /password-vision/，这里会自动拼接出 /password-vision/api/...
+  // 如果 basePath 是 /pwd/，这里会自动拼接出 /password-vision/api/...
   return `${basePath}${path}`;
 }
 
@@ -30,9 +30,9 @@ export async function apiRegister(payload: {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to register');
-  
+
   sessionToken = data.token;
-  
+
   return data;
 }
 

@@ -39,10 +39,10 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/password-vision/api": {
+      "/pwd/api": {
         target: "http://localhost:3000",
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/password-vision/, "")
+        rewrite: (path) => path.replace(/^\/pwd/, "")
       },
     },
   },
