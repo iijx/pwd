@@ -1,6 +1,6 @@
 let sessionToken: string | null = null;
 
-const isProd = process.env.NODE_ENV === 'production';
+const isProd = import.meta.env.PROD;
 const basePath = isProd ? `https://vapi.pastecuts.cn/pwd` : '/';
 
 function getApiUrl(path: string) {
