@@ -30,3 +30,6 @@ dist-ssr
 *.sw?
 db.sqlite
 bun.lock
+
+.env
+.example

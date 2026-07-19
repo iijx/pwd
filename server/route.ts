@@ -5,9 +5,9 @@ import { db, UserRow } from './db'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-me-in-production'
 
-const app = new Hono()
+export const router = new Hono()
 
-app.use('*', cors())
+router.use('*', cors())
 
 async function generateToken(userId: string) {
   const payload = {
@@ -17,18 +17,18 @@ async function generateToken(userId: string) {
   return await sign(payload, JWT_SECRET)
 }
 
-app.get('/api/has-users', (c) => {
+router.get('/api/has-users', (c) => {
   const query = db.prepare(`SELECT count(*) as count FROM users`)
   const result = query.get() as { count: number }
   return c.json({ hasUsers: result.count > 0 })
 })
 
-app.post('/api/reset-all', (c) => {
+router.post('/api/reset-all', (c) => {
   db.run(`DELETE FROM users`)
   return c.json({ success: true })
 })
 
-app.post('/api/register', async (c) => {
+router.post('/api/register', async (c) => {
   const body = await c.req.json()
   const { userId, pbkdf2Salt, wrappedKeyMaster, wrappedKeyRecovery, recoveryKeyHash, vaultCiphertext, vaultIv } = body
 
@@ -57,7 +57,7 @@ app.post('/api/register', async (c) => {
   }
 })
 
-app.post('/api/login', async (c) => {
+router.post('/api/login', async (c) => {
   const body = await c.req.json()
   const { userId } = body
 
@@ -79,7 +79,7 @@ app.post('/api/login', async (c) => {
   })
 })
 
-app.post('/api/login-recovery', async (c) => {
+router.post('/api/login-recovery', async (c) => {
   const body = await c.req.json()
   const { recoveryKeyHash } = body
 
@@ -103,10 +103,10 @@ app.post('/api/login-recovery', async (c) => {
 })
 
 // Protected routes
-app.use('/api/vault', jwt({ secret: JWT_SECRET, alg: 'HS256' }))
-app.use('/api/keys', jwt({ secret: JWT_SECRET, alg: 'HS256' }))
+router.use('/api/vault', jwt({ secret: JWT_SECRET, alg: 'HS256' }))
+router.use('/api/keys', jwt({ secret: JWT_SECRET, alg: 'HS256' }))
 
-app.get('/api/vault', (c) => {
+router.get('/api/vault', (c) => {
   const payload = c.get('jwtPayload') as { userId: string }
   const user = payload.userId
 
@@ -122,7 +122,7 @@ app.get('/api/vault', (c) => {
   })
 })
 
-app.put('/api/vault', async (c) => {
+router.put('/api/vault', async (c) => {
   const payload = c.get('jwtPayload') as { userId: string }
   const user = payload.userId
 
@@ -130,7 +130,7 @@ app.put('/api/vault', async (c) => {
   const { vaultCiphertext, vaultIv, baseVersion } = body
 
   if (vaultCiphertext === undefined || vaultIv === undefined || baseVersion === undefined) {
-     return c.json({ error: 'Missing fields' }, 400)
+    return c.json({ error: 'Missing fields' }, 400)
   }
 
   const query = db.prepare(`SELECT version FROM users WHERE id = ?`)
@@ -152,7 +152,7 @@ app.put('/api/vault', async (c) => {
   return c.json({ success: true })
 })
 
-app.put('/api/keys', async (c) => {
+router.put('/api/keys', async (c) => {
   const payload = c.get('jwtPayload') as { userId: string }
   const user = payload.userId
 
@@ -187,5 +187,3 @@ app.put('/api/keys', async (c) => {
 
   return c.json({ success: true })
 })
-
-export default app

@@ -1,10 +1,13 @@
-import app from './route'
+import { router } from './route'
+import { cors } from 'hono/cors'
+import { Hono } from 'hono'
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000
+const app = new Hono()
+app.use('*', cors())
 
-console.log(`🦊 Hono server is running at http://localhost:${PORT}`)
+app.route('/api', router)
 
 export default {
-  port: PORT,
-  fetch: app.fetch,
+  port: parseInt(process.env.PORT || '3006'),
+  fetch: app.fetch
 }
