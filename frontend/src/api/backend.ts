@@ -1,10 +1,12 @@
 let sessionToken: string | null = null;
 
-const basePath = import.meta.env.BASE_URL || '/';
+const isProd = process.env.NODE_ENV === 'production';
+const basePath = isProd ? `https://vapi.pastecuts.cn/pwd` : '/';
 
 function getApiUrl(path: string) {
-  // 如果 basePath 是 /pwd/，这里会自动拼接出 /password-vision/api/...
-  return `${basePath}${path}`;
+  // 确保拼接时带有正确的斜杠
+  const base = basePath.endsWith('/') ? basePath : `${basePath}/`;
+  return `${base}${path}`;
 }
 
 export async function apiHasUsers(): Promise<boolean> {

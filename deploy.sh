@@ -14,8 +14,8 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-echo "📦 Installing dependencies..."
-bun install
+echo "📦 Installing backend dependencies..."
+(cd server && bun install)
 
 echo "🔄 Restarting backend service with pm2..."
 # 检查 pm2 是否全局安装
