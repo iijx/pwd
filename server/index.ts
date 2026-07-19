@@ -1,9 +1,14 @@
 import { router } from './route'
 import { cors } from 'hono/cors'
 import { Hono } from 'hono'
+import dotenv from 'dotenv'
 import { logger } from 'hono/logger'
 
+// 加载环境变量
+dotenv.config()
+
 const app = new Hono()
+
 app.use('*', logger())
 app.use('*', cors())
 
