@@ -1,4 +1,4 @@
-import { router } from './route'
+import { router } from './route.ts'
 import { cors } from 'hono/cors'
 import { Hono } from 'hono'
 import { logger } from 'hono/logger'

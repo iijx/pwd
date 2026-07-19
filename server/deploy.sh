@@ -31,7 +31,7 @@ if pm2 describe pwd > /dev/null 2>&1; then
 else
   echo "Starting new pm2 instance..."
   # pm2 默认会加载当前目录的 .env 文件
-  pm2 start index.ts --name "pwd" --interpreter ~/.bun/bin/bun
+  pm2 start bun --name "pwd" -- index.ts
   pm2 save
 fi
 
