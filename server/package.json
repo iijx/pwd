@@ -13,7 +13,6 @@
   },
   "type": "module",
   "dependencies": {
-    "dotenv": "^17.4.2",
     "hono": "^4.12.31"
   }
 }
