@@ -17,18 +17,18 @@ async function generateToken(userId: string) {
   return await sign(payload, JWT_SECRET)
 }
 
-router.get('/api/has-users', (c) => {
+router.get('/has-users', (c) => {
   const query = db.prepare(`SELECT count(*) as count FROM users`)
   const result = query.get() as { count: number }
   return c.json({ hasUsers: result.count > 0 })
 })
 
-router.post('/api/reset-all', (c) => {
+router.post('/reset-all', (c) => {
   db.run(`DELETE FROM users`)
   return c.json({ success: true })
 })
 
-router.post('/api/register', async (c) => {
+router.post('/register', async (c) => {
   const body = await c.req.json()
   const { userId, pbkdf2Salt, wrappedKeyMaster, wrappedKeyRecovery, recoveryKeyHash, vaultCiphertext, vaultIv } = body
 
@@ -57,7 +57,7 @@ router.post('/api/register', async (c) => {
   }
 })
 
-router.post('/api/login', async (c) => {
+router.post('/login', async (c) => {
   const body = await c.req.json()
   const { userId } = body
 
@@ -79,7 +79,7 @@ router.post('/api/login', async (c) => {
   })
 })
 
-router.post('/api/login-recovery', async (c) => {
+router.post('/login-recovery', async (c) => {
   const body = await c.req.json()
   const { recoveryKeyHash } = body
 
@@ -103,10 +103,10 @@ router.post('/api/login-recovery', async (c) => {
 })
 
 // Protected routes
-router.use('/api/vault', jwt({ secret: JWT_SECRET, alg: 'HS256' }))
-router.use('/api/keys', jwt({ secret: JWT_SECRET, alg: 'HS256' }))
+router.use('/vault', jwt({ secret: JWT_SECRET, alg: 'HS256' }))
+router.use('/keys', jwt({ secret: JWT_SECRET, alg: 'HS256' }))
 
-router.get('/api/vault', (c) => {
+router.get('/vault', (c) => {
   const payload = c.get('jwtPayload') as { userId: string }
   const user = payload.userId
 
@@ -122,7 +122,7 @@ router.get('/api/vault', (c) => {
   })
 })
 
-router.put('/api/vault', async (c) => {
+router.put('/vault', async (c) => {
   const payload = c.get('jwtPayload') as { userId: string }
   const user = payload.userId
 
@@ -152,7 +152,7 @@ router.put('/api/vault', async (c) => {
   return c.json({ success: true })
 })
 
-router.put('/api/keys', async (c) => {
+router.put('/keys', async (c) => {
   const payload = c.get('jwtPayload') as { userId: string }
   const user = payload.userId
 

@@ -32,4 +32,3 @@ db.sqlite
 bun.lock
 
 .env
-.example
